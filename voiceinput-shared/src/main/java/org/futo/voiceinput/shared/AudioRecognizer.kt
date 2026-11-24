@@ -348,6 +348,11 @@ class AudioRecognizer(
 
         val samples = ShortArray(1600)
 
+        // TEMP DEBUG
+        var dbgPeakRms = 0f
+        var dbgPeakSpeech = 0
+        var dbgLastLogPos = 0
+
         while (isRecording) {
             yield()
             val nRead = recorder.read(samples, 0, 1600, AudioRecord.READ_BLOCKING)
@@ -414,6 +419,16 @@ class AudioRecognizer(
 
             if (startSoundPassed && ((rms > 0.01) || (numConsecutiveSpeech > 8))) {
                 hasTalked = true
+            }
+
+            // TEMP DEBUG: VAD auto-stop diagnostics, aggregated over ~1 second
+            dbgPeakRms = maxOf(dbgPeakRms, rms)
+            dbgPeakSpeech = maxOf(dbgPeakSpeech, numConsecutiveSpeech)
+            if (floatSamples.position() - dbgLastLogPos >= 16000) {
+                dbgLastLogPos = floatSamples.position()
+                Log.d("VADDebug", "hasTalked=$hasTalked noiseFloor=$noiseFloor peakRms=$dbgPeakRms peakSpeechRun=$dbgPeakSpeech nonSpeech=$numConsecutiveNonSpeech/$vadSilenceFrames pos=${floatSamples.position()}")
+                dbgPeakRms = 0f
+                dbgPeakSpeech = 0
             }
 
             if (rms > 0.0001) {
