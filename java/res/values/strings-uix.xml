@@ -574,6 +574,11 @@
     <string name="voice_input_settings_builtin_disabled_notice2">Using external engine: %s</string>
     <string name="voice_input_settings_backend_system">External engine</string>
     <string name="voice_input_settings_backend_system_internal">None (built-in)</string>
+    <string name="voice_input_settings_backend_remote">Remote server (OpenAI-compatible)</string>
+    <string name="voice_input_settings_remote_url">Server URL</string>
+    <string name="voice_input_settings_remote_model">Model</string>
+    <string name="voice_input_settings_remote_api_key">API key (optional)</string>
+    <string name="voice_input_settings_remote_tip">Your recorded speech will be sent to this server for transcription. Enter the API base URL (e.g. http://host:8000/v1); /audio/transcriptions is appended automatically.</string>
     <string name="voice_input_settings_backend_system_external_warning">Note: the %s app will record your speech and may send it to online servers, it is not covered by our privacy policy.</string>
     <string name="voice_input_settings_backend_system_confirm">Switch voice input engine to %s?</string>
     <string name="voice_input_settings_backend_system_confirm_yes">Switch</string>

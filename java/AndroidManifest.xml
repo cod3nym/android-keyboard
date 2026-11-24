@@ -35,12 +35,16 @@
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove"/>
 
+    <!-- For sending voice input to a user-configured OpenAI-compatible transcription server -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application android:label="@string/english_ime_name"
          android:icon="@mipmap/ic_launcher"
          android:roundIcon="@mipmap/ic_launcher_round"
          android:supportsRtl="true"
          android:allowBackup="true"
          android:largeHeap="true"
+         android:usesCleartextTraffic="true"
          android:enableOnBackInvokedCallback="true"
          android:name=".CrashLoggingApplication">
 

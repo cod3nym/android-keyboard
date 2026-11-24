@@ -31,12 +31,16 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import org.futo.voiceinput.shared.ggml.InferenceCancelledException
 import org.futo.voiceinput.shared.ggml.InvalidModelException
+import org.futo.voiceinput.shared.remote.RemoteTranscriber
+import org.futo.voiceinput.shared.remote.RemoteTranscriptionConfiguration
+import org.futo.voiceinput.shared.remote.RemoteTranscriptionException
 import org.futo.voiceinput.shared.types.AudioRecognizerListener
 import org.futo.voiceinput.shared.types.InferenceState
 import org.futo.voiceinput.shared.types.Language
 import org.futo.voiceinput.shared.types.MagnitudeState
 import org.futo.voiceinput.shared.types.ModelInferenceCallback
 import org.futo.voiceinput.shared.types.ModelLoader
+import org.futo.voiceinput.shared.types.toWhisperString
 import org.futo.voiceinput.shared.ui.MicrophoneDeviceState
 import org.futo.voiceinput.shared.whisper.DecodingConfiguration
 import org.futo.voiceinput.shared.whisper.ModelManager
@@ -87,7 +91,9 @@ data class RecordingSettings(
 data class AudioRecognizerSettings(
     val modelRunConfiguration: MultiModelRunConfiguration,
     val decodingConfiguration: DecodingConfiguration,
-    val recordingConfiguration: RecordingSettings
+    val recordingConfiguration: RecordingSettings,
+    // When set, audio is sent to this OpenAI-compatible endpoint instead of a local model
+    val remoteConfiguration: RemoteTranscriptionConfiguration? = null
 )
 
 class ModelDoesNotExistException(val models: List<ModelLoader>) : Throwable()
@@ -103,6 +109,7 @@ class AudioRecognizer(
     private var recorder: AudioRecord? = null
 
     private val modelRunner = MultiModelRunner(modelManager)
+    private val remoteTranscriber = settings.remoteConfiguration?.let { RemoteTranscriber(it) }
 
     private val canExpandSpace = settings.recordingConfiguration.canExpandSpace
     private val useVAD = settings.recordingConfiguration.useVADAutoStop
@@ -194,6 +201,8 @@ class AudioRecognizer(
 
     @Throws(ModelDoesNotExistException::class)
     private fun verifyModelsExist() {
+        if (remoteTranscriber != null) return
+
         val modelsThatDoNotExist = mutableListOf<ModelLoader>()
 
         if (!settings.modelRunConfiguration.primaryModel.exists(context)) {
@@ -226,6 +235,7 @@ class AudioRecognizer(
         isRecording = false
 
         modelRunner.cancelAll()
+        remoteTranscriber?.cancel()
 
         unfocusAudio()
 
@@ -293,6 +303,7 @@ class AudioRecognizer(
     }
 
     private suspend fun preloadModels() {
+        if (remoteTranscriber != null) return
         modelRunner.preload(settings.modelRunConfiguration)
     }
 
@@ -540,6 +551,36 @@ class AudioRecognizer(
         }
     }
 
+    private suspend fun runRemote(transcriber: RemoteTranscriber, samples: FloatArray): String? {
+        val languages = settings.decodingConfiguration.languages
+        val language = if (languages.size == 1) languages.first().toWhisperString() else null
+
+        val glossary = settings.decodingConfiguration.glossary
+        val prompt = if (glossary.isNotEmpty()) {
+            "(Glossary: " + glossary.joinToString(separator = ", ") + ")"
+        } else {
+            null
+        }
+
+        withContext(Dispatchers.Main) {
+            listener.decodingStatus(InferenceState.Encoding)
+        }
+
+        return try {
+            withContext(Dispatchers.IO) {
+                transcriber.transcribe(samples, language, prompt)
+            }.trim()
+        } catch (e: RemoteTranscriptionException) {
+            Log.e("AudioRecognizer", "Remote transcription failed", e)
+            yield()
+            withContext(Dispatchers.Main) {
+                listener.transcriptionFailed(e.message ?: "Unknown error")
+                reset()
+            }
+            null
+        }
+    }
+
     private suspend fun runModel() {
         loadModelJob?.let {
             if (it.isActive) {
@@ -551,7 +592,9 @@ class AudioRecognizer(
         val floatArray = floatSamples.array().sliceArray(0 until floatSamples.position())
 
         yield()
-        val outputText = try {
+        val outputText = if (remoteTranscriber != null) {
+            runRemote(remoteTranscriber, floatArray) ?: return
+        } else try {
              modelRunner.run(
                 floatArray,
                 settings.modelRunConfiguration,
