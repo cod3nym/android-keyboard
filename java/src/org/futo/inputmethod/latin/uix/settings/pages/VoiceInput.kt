@@ -31,6 +31,8 @@ import org.futo.inputmethod.latin.uix.REMOTE_VOICE_INPUT_MODEL
 import org.futo.inputmethod.latin.uix.REMOTE_VOICE_INPUT_URL
 import org.futo.inputmethod.latin.uix.SettingsKey
 import org.futo.inputmethod.latin.uix.USE_REMOTE_VOICE_INPUT
+import org.futo.inputmethod.latin.uix.VAD_AUTOSTOP_SILENCE_MS
+import org.futo.inputmethod.latin.uix.settings.SettingSlider
 import org.futo.inputmethod.latin.uix.getSettingBlocking
 import org.futo.inputmethod.latin.uix.SYSTEM_VOICE_INPUT_PACKAGE
 import org.futo.inputmethod.latin.uix.USE_PERSONAL_DICT
@@ -56,6 +58,10 @@ private val visibilityCheckRemoteVoiceInput = @Composable {
 
 private val visibilityCheckLocalVoiceInput = @Composable {
     useDataStoreValue(USE_SYSTEM_VOICE_INPUT) == false && useDataStoreValue(USE_REMOTE_VOICE_INPUT) == false
+}
+
+private val visibilityCheckVadAutoStop = @Composable {
+    useDataStoreValue(USE_SYSTEM_VOICE_INPUT) == false && useDataStoreValue(USE_VAD_AUTOSTOP) == true
 }
 
 private data class VoiceIMEInfo(
@@ -260,6 +266,31 @@ val VoiceInputMenu = UserSettingsMenu(
             subtitle = R.string.voice_input_settings_autostop_vad_subtitle,
             setting = USE_VAD_AUTOSTOP
         ).copy(visibilityCheck = visibilityCheckNotSystemVoiceInput),
+
+        UserSetting(
+            name = R.string.voice_input_settings_autostop_silence_duration,
+            subtitle = R.string.voice_input_settings_autostop_silence_duration_subtitle,
+            visibilityCheck = visibilityCheckVadAutoStop
+        ) {
+            val res = LocalResources.current
+            val formatSeconds = { ms: Int ->
+                res.getString(R.string.voice_input_settings_autostop_silence_duration_value, ms / 1000.0f)
+            }
+            SettingSlider(
+                title = stringResource(R.string.voice_input_settings_autostop_silence_duration),
+                subtitle = stringResource(
+                    R.string.voice_input_settings_autostop_silence_duration_subtitle,
+                    formatSeconds(VAD_AUTOSTOP_SILENCE_MS.default)
+                ),
+                setting = VAD_AUTOSTOP_SILENCE_MS,
+                range = 500.0f..10000.0f,
+                hardRange = 300.0f..60000.0f,
+                // Snap slider to 0.5s increments; typed values are kept as-is (rounded to 0.1s)
+                transform = { (Math.round(it / 100.0f) * 100) },
+                indicator = formatSeconds,
+                steps = 18
+            )
+        },
 
         userSettingToggleDataStore(
             title = R.string.voice_input_settings_animate_bubble,

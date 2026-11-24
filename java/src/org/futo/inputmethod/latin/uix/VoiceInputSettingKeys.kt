@@ -49,6 +49,12 @@ val USE_VAD_AUTOSTOP = SettingsKey(
     default = true
 )
 
+// How long the user must be silent (after having spoken) before recording auto-stops
+val VAD_AUTOSTOP_SILENCE_MS = SettingsKey(
+    key = intPreferencesKey("vad_autostop_silence_ms"),
+    default = 2000
+)
+
 val ENGLISH_MODEL_INDEX = SettingsKey(
     key = intPreferencesKey("english_model_index"),
     default = 0

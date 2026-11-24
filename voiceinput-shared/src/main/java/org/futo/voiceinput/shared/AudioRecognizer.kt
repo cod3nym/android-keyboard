@@ -85,7 +85,9 @@ data class RecordingSettings(
     val preferBluetoothMic: Boolean,
     val requestAudioFocus: Boolean,
     val canExpandSpace: Boolean,
-    val useVADAutoStop: Boolean
+    val useVADAutoStop: Boolean,
+    // Silence required after speech before auto-stopping (only used if useVADAutoStop)
+    val vadSilenceDurationMs: Int = 2000
 )
 
 data class AudioRecognizerSettings(
@@ -113,6 +115,9 @@ class AudioRecognizer(
 
     private val canExpandSpace = settings.recordingConfiguration.canExpandSpace
     private val useVAD = settings.recordingConfiguration.useVADAutoStop
+
+    // VAD frames are 480 samples at 16kHz = 30ms each
+    private val vadSilenceFrames = (settings.recordingConfiguration.vadSilenceDurationMs / 30).coerceAtLeast(1)
 
     private var floatSamples: FloatBuffer = FloatBuffer.allocate(16000 * 30)
     private var recorderJob: Job? = null
@@ -346,7 +351,7 @@ class AudioRecognizer(
 
             var isRunningOutOfSpace = (floatSamples.remaining() < nRead.coerceAtLeast(1600)) && !expandSpaceIfAllowed()
 
-            val hasNotTalkedRecently = hasTalked && (numConsecutiveNonSpeech > 66) && useVAD
+            val hasNotTalkedRecently = hasTalked && (numConsecutiveNonSpeech > vadSilenceFrames) && useVAD
             if (isRunningOutOfSpace || hasNotTalkedRecently) {
                 yield()
                 withContext(Dispatchers.Main) {

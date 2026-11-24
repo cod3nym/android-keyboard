@@ -45,6 +45,7 @@ import org.futo.inputmethod.latin.uix.USE_REMOTE_VOICE_INPUT
 import org.futo.inputmethod.latin.uix.ResourceHelper
 import org.futo.inputmethod.latin.uix.USE_PERSONAL_DICT
 import org.futo.inputmethod.latin.uix.USE_VAD_AUTOSTOP
+import org.futo.inputmethod.latin.uix.VAD_AUTOSTOP_SILENCE_MS
 import org.futo.inputmethod.latin.uix.VERBOSE_PROGRESS
 import org.futo.inputmethod.latin.uix.getSetting
 import org.futo.inputmethod.latin.uix.setSetting
@@ -168,7 +169,8 @@ private class VoiceInputActionWindow(
                 preferBluetoothMic = useBluetoothAudio,
                 requestAudioFocus = requestAudioFocus,
                 canExpandSpace = canExpandSpace,
-                useVADAutoStop = useVAD
+                useVADAutoStop = useVAD,
+                vadSilenceDurationMs = context.getSetting(VAD_AUTOSTOP_SILENCE_MS)
             ),
             remoteConfiguration = remoteConfiguration
         )
