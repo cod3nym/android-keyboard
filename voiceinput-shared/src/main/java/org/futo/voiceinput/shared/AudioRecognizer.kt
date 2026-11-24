@@ -341,6 +341,11 @@ class AudioRecognizer(
         var numConsecutiveNonSpeech = 0
         var numConsecutiveSpeech = 0
 
+        // Adaptive energy detection. On some devices (e.g. Nothing Phone) the VOICE_RECOGNITION
+        // source has very low gain, so speech never exceeds WebRTC VAD's internal energy floor.
+        // We therefore also treat a frame as speech when it is well above the background noise.
+        var noiseFloor = Float.POSITIVE_INFINITY
+
         val samples = ShortArray(1600)
 
         while (isRecording) {
@@ -366,7 +371,12 @@ class AudioRecognizer(
                 var offset = 0
                 while (remainingSamples > 0) {
                     if (!vadSampleBuffer.hasRemaining()) {
-                        val isSpeech = vad.isSpeech(vadSampleBuffer.array())
+                        val frame = vadSampleBuffer.array()
+                        val frameRms = sqrt(frame.sumOf { (it.toFloat() / Short.MAX_VALUE.toFloat()).pow(2).toDouble() } / frame.size).toFloat()
+                        noiseFloor = if (frameRms < noiseFloor) frameRms else noiseFloor * NOISE_FLOOR_RISE_PER_FRAME
+                        val speechThreshold = maxOf(noiseFloor * SPEECH_ABOVE_NOISE_RATIO, MIN_SPEECH_RMS)
+
+                        val isSpeech = vad.isSpeech(frame) || frameRms > speechThreshold
                         vadSampleBuffer.clear()
                         vadSampleBuffer.rewind()
 
@@ -454,6 +464,15 @@ class AudioRecognizer(
             }
         }
         println("isRecording loop exited")
+    }
+
+    private companion object {
+        // ~18 dB above the measured background noise counts as speech
+        const val SPEECH_ABOVE_NOISE_RATIO = 8.0f
+        // Never consider anything below -60 dBFS speech
+        const val MIN_SPEECH_RMS = 0.001f
+        // Let the noise floor creep up (~1.7%/s) so it can follow increasing background noise
+        const val NOISE_FLOOR_RISE_PER_FRAME = 1.0005f
     }
 
     private fun createVad(): VadModel {
