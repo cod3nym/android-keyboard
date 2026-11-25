@@ -368,7 +368,8 @@ android {
     }
 
     aaptOptions {
-        noCompress 'dict'
+        // .vxrt must stay uncompressed so the VAD model can be mmapped via AssetFileDescriptor
+        noCompress 'dict', 'vxrt'
     }
 
     packagingOptions {

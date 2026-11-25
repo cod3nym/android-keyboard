@@ -17,12 +17,6 @@ import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import androidx.lifecycle.LifecycleCoroutineScope
-import com.konovalov.vad.Vad
-import com.konovalov.vad.config.FrameSize
-import com.konovalov.vad.config.Mode
-import com.konovalov.vad.config.Model
-import com.konovalov.vad.config.SampleRate
-import com.konovalov.vad.models.VadModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -31,12 +25,16 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import org.futo.voiceinput.shared.ggml.InferenceCancelledException
 import org.futo.voiceinput.shared.ggml.InvalidModelException
+import org.futo.voiceinput.shared.remote.RemoteTranscriber
+import org.futo.voiceinput.shared.remote.RemoteTranscriptionConfiguration
+import org.futo.voiceinput.shared.remote.RemoteTranscriptionException
 import org.futo.voiceinput.shared.types.AudioRecognizerListener
 import org.futo.voiceinput.shared.types.InferenceState
 import org.futo.voiceinput.shared.types.Language
 import org.futo.voiceinput.shared.types.MagnitudeState
 import org.futo.voiceinput.shared.types.ModelInferenceCallback
 import org.futo.voiceinput.shared.types.ModelLoader
+import org.futo.voiceinput.shared.types.toWhisperString
 import org.futo.voiceinput.shared.ui.MicrophoneDeviceState
 import org.futo.voiceinput.shared.whisper.DecodingConfiguration
 import org.futo.voiceinput.shared.whisper.ModelManager
@@ -44,8 +42,6 @@ import org.futo.voiceinput.shared.whisper.MultiModelRunConfiguration
 import org.futo.voiceinput.shared.whisper.MultiModelRunner
 import org.futo.voiceinput.shared.whisper.isBlankResult
 import java.nio.FloatBuffer
-import java.nio.ShortBuffer
-import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sqrt
 
@@ -81,13 +77,17 @@ data class RecordingSettings(
     val preferBluetoothMic: Boolean,
     val requestAudioFocus: Boolean,
     val canExpandSpace: Boolean,
-    val useVADAutoStop: Boolean
+    val useVADAutoStop: Boolean,
+    // Silence required after speech before auto-stopping (only used if useVADAutoStop)
+    val vadSilenceDurationMs: Int = 2000
 )
 
 data class AudioRecognizerSettings(
     val modelRunConfiguration: MultiModelRunConfiguration,
     val decodingConfiguration: DecodingConfiguration,
-    val recordingConfiguration: RecordingSettings
+    val recordingConfiguration: RecordingSettings,
+    // When set, audio is sent to this OpenAI-compatible endpoint instead of a local model
+    val remoteConfiguration: RemoteTranscriptionConfiguration? = null
 )
 
 class ModelDoesNotExistException(val models: List<ModelLoader>) : Throwable()
@@ -103,9 +103,11 @@ class AudioRecognizer(
     private var recorder: AudioRecord? = null
 
     private val modelRunner = MultiModelRunner(modelManager)
+    private val remoteTranscriber = settings.remoteConfiguration?.let { RemoteTranscriber(it) }
 
     private val canExpandSpace = settings.recordingConfiguration.canExpandSpace
     private val useVAD = settings.recordingConfiguration.useVADAutoStop
+    private val vadSilenceDurationMs = settings.recordingConfiguration.vadSilenceDurationMs.coerceAtLeast(1)
 
     private var floatSamples: FloatBuffer = FloatBuffer.allocate(16000 * 30)
     private var recorderJob: Job? = null
@@ -194,6 +196,8 @@ class AudioRecognizer(
 
     @Throws(ModelDoesNotExistException::class)
     private fun verifyModelsExist() {
+        if (remoteTranscriber != null) return
+
         val modelsThatDoNotExist = mutableListOf<ModelLoader>()
 
         if (!settings.modelRunConfiguration.primaryModel.exists(context)) {
@@ -226,6 +230,7 @@ class AudioRecognizer(
         isRecording = false
 
         modelRunner.cancelAll()
+        remoteTranscriber?.cancel()
 
         unfocusAudio()
 
@@ -293,6 +298,7 @@ class AudioRecognizer(
     }
 
     private suspend fun preloadModels() {
+        if (remoteTranscriber != null) return
         modelRunner.preload(settings.modelRunConfiguration)
     }
 
@@ -308,7 +314,7 @@ class AudioRecognizer(
         return false
     }
 
-    private suspend fun recordingJob(recorder: AudioRecord, vad: VadModel?) {
+    private suspend fun recordingJob(recorder: AudioRecord, vad: VoiceActivityDetector?) {
         var hasTalked = false
         var anyNoiseAtAll = false
 
@@ -321,9 +327,7 @@ class AudioRecognizer(
         }
         var isMicBlocked = false
 
-        val vadSampleBuffer = ShortBuffer.allocate(480)
-        var numConsecutiveNonSpeech = 0
-        var numConsecutiveSpeech = 0
+        var vadStartSoundReset = false
 
         val samples = ShortArray(1600)
 
@@ -335,7 +339,8 @@ class AudioRecognizer(
 
             var isRunningOutOfSpace = (floatSamples.remaining() < nRead.coerceAtLeast(1600)) && !expandSpaceIfAllowed()
 
-            val hasNotTalkedRecently = hasTalked && (numConsecutiveNonSpeech > 66) && useVAD
+            val hasNotTalkedRecently = vad != null && vadStartSoundReset &&
+                    vad.hasDetectedSpeech && vad.silenceMs > vadSilenceDurationMs
             if (isRunningOutOfSpace || hasNotTalkedRecently) {
                 yield()
                 withContext(Dispatchers.Main) {
@@ -344,49 +349,22 @@ class AudioRecognizer(
                 return
             }
 
-            // Run VAD
-            if(useVAD && vad != null) {
-                var remainingSamples = nRead
-                var offset = 0
-                while (remainingSamples > 0) {
-                    if (!vadSampleBuffer.hasRemaining()) {
-                        val isSpeech = vad.isSpeech(vadSampleBuffer.array())
-                        vadSampleBuffer.clear()
-                        vadSampleBuffer.rewind()
-
-                        if (!isSpeech) {
-                            numConsecutiveNonSpeech++
-                            numConsecutiveSpeech = 0
-                        } else {
-                            numConsecutiveNonSpeech = 0
-                            numConsecutiveSpeech++
-                        }
-                    }
-
-                    val samplesToRead = min(min(remainingSamples, 480), vadSampleBuffer.remaining())
-                    for (i in 0 until samplesToRead) {
-                        vadSampleBuffer.put(
-                            samples[offset]
-                        )
-                        offset += 1
-                        remainingSamples -= 1
-                    }
-                }
-            }
+            vad?.process(samples, nRead)
 
             floatSamples.put(samples.sliceArray(0 until nRead).map { it.toFloat() / Short.MAX_VALUE.toFloat() }.toFloatArray())
 
             // Don't set hasTalked if the start sound may still be playing, otherwise on some
             // devices the rms just explodes and `hasTalked` is always true
             val startSoundPassed = (floatSamples.position() > 16000 * 0.6)
-            if (!startSoundPassed) {
-                numConsecutiveSpeech = 0
-                numConsecutiveNonSpeech = 0
+            if (startSoundPassed && !vadStartSoundReset) {
+                // Discard any speech the VAD attributed to the start sound
+                vad?.reset()
+                vadStartSoundReset = true
             }
 
             val rms = sqrt(samples.sumOf { (it.toFloat() / Short.MAX_VALUE.toFloat()).pow(2).toDouble() } / samples.size).toFloat()
 
-            if (startSoundPassed && ((rms > 0.01) || (numConsecutiveSpeech > 8))) {
+            if (startSoundPassed && ((rms > 0.01) || (vad?.hasDetectedSpeech == true))) {
                 hasTalked = true
             }
 
@@ -431,6 +409,7 @@ class AudioRecognizer(
                         }
                         break
                     }
+                    vad?.process(samples, nRead2)
                     floatSamples.put(samples.sliceArray(0 until nRead2).map { it.toFloat() / Short.MAX_VALUE.toFloat() }.toFloatArray())
                 } else {
                     break
@@ -438,12 +417,6 @@ class AudioRecognizer(
             }
         }
         println("isRecording loop exited")
-    }
-
-    private fun createVad(): VadModel {
-        return Vad.builder().setModel(Model.WEB_RTC_GMM).setMode(Mode.VERY_AGGRESSIVE)
-            .setFrameSize(FrameSize.FRAME_SIZE_480).setSampleRate(SampleRate.SAMPLE_RATE_16K)
-            .setSpeechDurationMs(150).setSilenceDurationMs(300).build()
     }
 
     @Throws(SecurityException::class)
@@ -466,7 +439,7 @@ class AudioRecognizer(
             recorderJob = lifecycleScope.launch {
                 withContext(Dispatchers.Default) {
                     if(useVAD) {
-                        createVad().use { vad ->
+                        VoiceActivityDetector.create(context).use { vad ->
                             recordingJob(recorder, vad)
                         }
                     } else {
@@ -540,6 +513,36 @@ class AudioRecognizer(
         }
     }
 
+    private suspend fun runRemote(transcriber: RemoteTranscriber, samples: FloatArray): String? {
+        val languages = settings.decodingConfiguration.languages
+        val language = if (languages.size == 1) languages.first().toWhisperString() else null
+
+        val glossary = settings.decodingConfiguration.glossary
+        val prompt = if (glossary.isNotEmpty()) {
+            "(Glossary: " + glossary.joinToString(separator = ", ") + ")"
+        } else {
+            null
+        }
+
+        withContext(Dispatchers.Main) {
+            listener.decodingStatus(InferenceState.Encoding)
+        }
+
+        return try {
+            withContext(Dispatchers.IO) {
+                transcriber.transcribe(samples, language, prompt)
+            }.trim()
+        } catch (e: RemoteTranscriptionException) {
+            Log.e("AudioRecognizer", "Remote transcription failed", e)
+            yield()
+            withContext(Dispatchers.Main) {
+                listener.transcriptionFailed(e.message ?: "Unknown error")
+                reset()
+            }
+            null
+        }
+    }
+
     private suspend fun runModel() {
         loadModelJob?.let {
             if (it.isActive) {
@@ -551,7 +554,9 @@ class AudioRecognizer(
         val floatArray = floatSamples.array().sliceArray(0 until floatSamples.position())
 
         yield()
-        val outputText = try {
+        val outputText = if (remoteTranscriber != null) {
+            runRemote(remoteTranscriber, floatArray) ?: return
+        } else try {
              modelRunner.run(
                 floatArray,
                 settings.modelRunConfiguration,

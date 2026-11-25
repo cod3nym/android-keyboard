@@ -30,6 +30,7 @@ import org.futo.voiceinput.shared.ui.RecognizeMicError
 import org.futo.voiceinput.shared.whisper.DecodingConfiguration
 import org.futo.voiceinput.shared.whisper.ModelManager
 import org.futo.voiceinput.shared.whisper.MultiModelRunConfiguration
+import org.futo.voiceinput.shared.remote.RemoteTranscriptionConfiguration
 
 data class RecognizerViewSettings(
     val shouldShowVerboseFeedback: Boolean,
@@ -38,7 +39,8 @@ data class RecognizerViewSettings(
 
     val modelRunConfiguration: MultiModelRunConfiguration,
     val decodingConfiguration: DecodingConfiguration,
-    val recordingConfiguration: RecordingSettings
+    val recordingConfiguration: RecordingSettings,
+    val remoteConfiguration: RemoteTranscriptionConfiguration? = null
 )
 
 private val VerboseAnnotations = hashMapOf(
@@ -85,8 +87,10 @@ class RecognizerView(
     private val statusState = mutableStateOf(MagnitudeState.NOT_TALKED_YET)
 
     enum class CurrentView {
-        LoadingCircle, PartialDecodingResult, InnerRecognize, PermissionError, ModelError
+        LoadingCircle, PartialDecodingResult, InnerRecognize, PermissionError, ModelError, RemoteError
     }
+
+    private val remoteErrorText = mutableStateOf("")
 
     private val loadingCircleText = mutableStateOf("")
     private val partialDecodingText = mutableStateOf("")
@@ -148,6 +152,26 @@ class RecognizerView(
                             .padding(8.dp), textAlign = TextAlign.Center)
                 }
             }
+
+            CurrentView.RemoteError -> {
+                Box(modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        enabled = true,
+                        onClickLabel = null,
+                        onClick = {
+                            listener.openSettings()
+                        },
+                        role = null,
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() })) {
+                    Text(
+                        stringResource(R.string.remote_transcription_error, remoteErrorText.value),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(8.dp), textAlign = TextAlign.Center)
+                }
+            }
         }
     }
 
@@ -175,6 +199,12 @@ class RecognizerView(
         override fun modelLoadingFailed() {
             listener.cancelled()
             currentViewState.value = CurrentView.ModelError
+        }
+
+        override fun transcriptionFailed(message: String) {
+            listener.cancelled()
+            remoteErrorText.value = message
+            currentViewState.value = CurrentView.RemoteError
         }
 
         override fun partialResult(result: String) {
@@ -245,7 +275,8 @@ class RecognizerView(
         settings = AudioRecognizerSettings(
             modelRunConfiguration = settings.modelRunConfiguration,
             decodingConfiguration = settings.decodingConfiguration,
-            recordingConfiguration = settings.recordingConfiguration
+            recordingConfiguration = settings.recordingConfiguration,
+            remoteConfiguration = settings.remoteConfiguration
         )
     )
 

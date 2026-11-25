@@ -1,8 +1,20 @@
 package org.futo.inputmethod.latin.uix.settings.pages
 
 import android.view.inputmethod.InputMethodManager
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
@@ -14,6 +26,14 @@ import org.futo.inputmethod.latin.uix.CAN_EXPAND_SPACE
 import org.futo.inputmethod.latin.uix.DISALLOW_SYMBOLS
 import org.futo.inputmethod.latin.uix.ENABLE_SOUND
 import org.futo.inputmethod.latin.uix.PREFER_BLUETOOTH
+import org.futo.inputmethod.latin.uix.REMOTE_VOICE_INPUT_API_KEY
+import org.futo.inputmethod.latin.uix.REMOTE_VOICE_INPUT_MODEL
+import org.futo.inputmethod.latin.uix.REMOTE_VOICE_INPUT_URL
+import org.futo.inputmethod.latin.uix.SettingsKey
+import org.futo.inputmethod.latin.uix.USE_REMOTE_VOICE_INPUT
+import org.futo.inputmethod.latin.uix.VAD_AUTOSTOP_SILENCE_MS
+import org.futo.inputmethod.latin.uix.settings.SettingSlider
+import org.futo.inputmethod.latin.uix.getSettingBlocking
 import org.futo.inputmethod.latin.uix.SYSTEM_VOICE_INPUT_PACKAGE
 import org.futo.inputmethod.latin.uix.USE_PERSONAL_DICT
 import org.futo.inputmethod.latin.uix.USE_SYSTEM_VOICE_INPUT
@@ -32,11 +52,57 @@ private val visibilityCheckNotSystemVoiceInput = @Composable {
     useDataStoreValue(USE_SYSTEM_VOICE_INPUT) == false
 }
 
+private val visibilityCheckRemoteVoiceInput = @Composable {
+    useDataStoreValue(USE_SYSTEM_VOICE_INPUT) == false && useDataStoreValue(USE_REMOTE_VOICE_INPUT) == true
+}
+
+private val visibilityCheckLocalVoiceInput = @Composable {
+    useDataStoreValue(USE_SYSTEM_VOICE_INPUT) == false && useDataStoreValue(USE_REMOTE_VOICE_INPUT) == false
+}
+
+private val visibilityCheckVadAutoStop = @Composable {
+    useDataStoreValue(USE_SYSTEM_VOICE_INPUT) == false && useDataStoreValue(USE_VAD_AUTOSTOP) == true
+}
+
 private data class VoiceIMEInfo(
     val builtin: Boolean,
     val name: String,
     val packageName: String,
+    val remote: Boolean = false,
 )
+
+@Composable
+private fun RemoteVoiceInputTextField(
+    label: String,
+    placeholder: String,
+    setting: SettingsKey<String>,
+    isSecret: Boolean = false,
+    keyboardType: KeyboardType = KeyboardType.Text
+) {
+    val context = LocalContext.current
+    val dataStore = useDataStore(setting)
+    val text = remember { mutableStateOf(context.getSettingBlocking(setting)) }
+
+    LaunchedEffect(text.value) {
+        dataStore.setValue(text.value)
+    }
+
+    OutlinedTextField(
+        value = text.value,
+        onValueChange = { text.value = it },
+        label = { Text(label) },
+        placeholder = { Text(placeholder) },
+        singleLine = true,
+        visualTransformation = if(isSecret) PasswordVisualTransformation() else VisualTransformation.None,
+        keyboardOptions = KeyboardOptions(
+            keyboardType = if(isSecret) KeyboardType.Password else keyboardType,
+            autoCorrectEnabled = false
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp, 4.dp)
+    )
+}
 
 @Composable
 fun usePackageReadableName(pkg: String): String? {
@@ -64,6 +130,7 @@ val VoiceInputMenu = UserSettingsMenu(
             )
         ) {
             val useExternal = useDataStore(USE_SYSTEM_VOICE_INPUT)
+            val useRemote = useDataStore(USE_REMOTE_VOICE_INPUT)
             val externalPkg = useDataStore(SYSTEM_VOICE_INPUT_PACKAGE)
 
             val context = LocalContext.current
@@ -72,6 +139,7 @@ val VoiceInputMenu = UserSettingsMenu(
                 val imm = context.getSystemService<InputMethodManager>()!!
                 buildList {
                     add(VoiceIMEInfo(true, "", ""))
+                    add(VoiceIMEInfo(false, "", "", remote = true))
                     addAll(imm.enabledInputMethodList.filter { im ->
                         im.packageName == externalPkg.value ||
                             (0 until im.subtypeCount).map { im.getSubtypeAt(it) }
@@ -82,9 +150,10 @@ val VoiceInputMenu = UserSettingsMenu(
                 }
             }
 
-            val currOption = remember(externalPkg.value) {
-                if(externalPkg.value == "") options[0] else
-                options.find { it.packageName == externalPkg.value }
+            val currOption = remember(externalPkg.value, useExternal.value, useRemote.value) {
+                if(!useExternal.value && useRemote.value) options[1]
+                else if(externalPkg.value == "") options[0]
+                else options.find { it.packageName == externalPkg.value }
             }
 
 
@@ -93,11 +162,13 @@ val VoiceInputMenu = UserSettingsMenu(
                 options,
                 currOption,
                 {
-                    useExternal.setValue(!it.builtin)
+                    useExternal.setValue(!it.builtin && !it.remote)
+                    useRemote.setValue(it.remote)
                     externalPkg.setValue(it.packageName ?: "")
                 },
                 {
                     if(it.builtin) res.getString(R.string.voice_input_settings_backend_system_internal)
+                    else if(it.remote) res.getString(R.string.voice_input_settings_backend_remote)
                     else it.name
                 }
             )
@@ -114,6 +185,36 @@ val VoiceInputMenu = UserSettingsMenu(
                     Tip(stringResource(R.string.voice_input_settings_backend_system_external_warning,
                         currOption?.name ?: externalPkg.value))
             }
+        },
+
+        UserSetting(
+            name = R.string.voice_input_settings_remote_url,
+            searchTagList = listOf(
+                R.string.voice_input_settings_backend_remote,
+                R.string.voice_input_settings_remote_model,
+                R.string.voice_input_settings_remote_api_key
+            ),
+            visibilityCheck = visibilityCheckRemoteVoiceInput
+        ) {
+            Tip(stringResource(R.string.voice_input_settings_remote_tip))
+
+            RemoteVoiceInputTextField(
+                label = stringResource(R.string.voice_input_settings_remote_url),
+                placeholder = "http://192.168.1.10:8000/v1",
+                setting = REMOTE_VOICE_INPUT_URL,
+                keyboardType = KeyboardType.Uri
+            )
+            RemoteVoiceInputTextField(
+                label = stringResource(R.string.voice_input_settings_remote_model),
+                placeholder = "whisper-1",
+                setting = REMOTE_VOICE_INPUT_MODEL
+            )
+            RemoteVoiceInputTextField(
+                label = stringResource(R.string.voice_input_settings_remote_api_key),
+                placeholder = "",
+                setting = REMOTE_VOICE_INPUT_API_KEY,
+                isSecret = true
+            )
         },
 
         //if(!systemVoiceInput.value) {
@@ -166,6 +267,31 @@ val VoiceInputMenu = UserSettingsMenu(
             setting = USE_VAD_AUTOSTOP
         ).copy(visibilityCheck = visibilityCheckNotSystemVoiceInput),
 
+        UserSetting(
+            name = R.string.voice_input_settings_autostop_silence_duration,
+            subtitle = R.string.voice_input_settings_autostop_silence_duration_subtitle,
+            visibilityCheck = visibilityCheckVadAutoStop
+        ) {
+            val res = LocalResources.current
+            val formatSeconds = { ms: Int ->
+                res.getString(R.string.voice_input_settings_autostop_silence_duration_value, ms / 1000.0f)
+            }
+            SettingSlider(
+                title = stringResource(R.string.voice_input_settings_autostop_silence_duration),
+                subtitle = stringResource(
+                    R.string.voice_input_settings_autostop_silence_duration_subtitle,
+                    formatSeconds(VAD_AUTOSTOP_SILENCE_MS.default)
+                ),
+                setting = VAD_AUTOSTOP_SILENCE_MS,
+                range = 500.0f..10000.0f,
+                hardRange = 300.0f..60000.0f,
+                // Snap slider to 0.5s increments; typed values are kept as-is (rounded to 0.1s)
+                transform = { (Math.round(it / 100.0f) * 100) },
+                indicator = formatSeconds,
+                steps = 18
+            )
+        },
+
         userSettingToggleDataStore(
             title = R.string.voice_input_settings_animate_bubble,
             subtitle = R.string.voice_input_settings_animate_bubble_subtitle,
@@ -177,7 +303,7 @@ val VoiceInputMenu = UserSettingsMenu(
             subtitle = R.string.voice_input_settings_change_models_subtitle,
             style = NavigationItemStyle.Misc,
             navigateTo = "languages"
-        ).copy(visibilityCheck = visibilityCheckNotSystemVoiceInput),
+        ).copy(visibilityCheck = visibilityCheckLocalVoiceInput),
         //}
     )
 )

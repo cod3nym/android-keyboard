@@ -574,6 +574,11 @@
     <string name="voice_input_settings_builtin_disabled_notice2">Using external engine: %s</string>
     <string name="voice_input_settings_backend_system">External engine</string>
     <string name="voice_input_settings_backend_system_internal">None (built-in)</string>
+    <string name="voice_input_settings_backend_remote">Remote server (OpenAI-compatible)</string>
+    <string name="voice_input_settings_remote_url">Server URL</string>
+    <string name="voice_input_settings_remote_model">Model</string>
+    <string name="voice_input_settings_remote_api_key">API key (optional)</string>
+    <string name="voice_input_settings_remote_tip">Your recorded speech will be sent to this server for transcription. Enter the API base URL (e.g. http://host:8000/v1); /audio/transcriptions is appended automatically.</string>
     <string name="voice_input_settings_backend_system_external_warning">Note: the %s app will record your speech and may send it to online servers, it is not covered by our privacy policy.</string>
     <string name="voice_input_settings_backend_system_confirm">Switch voice input engine to %s?</string>
     <string name="voice_input_settings_backend_system_confirm_yes">Switch</string>
@@ -597,6 +602,9 @@
     <string name="voice_input_settings_long_form_subtitle">If disabled, voice input will auto-stop after 30 seconds.</string>
     <string name="voice_input_settings_autostop_vad">Auto-stop on silence</string>
     <string name="voice_input_settings_autostop_vad_subtitle">Automatically stop when silence is detected. You may need to manually stop regardless if there\'s too much background noise.</string>
+    <string name="voice_input_settings_autostop_silence_duration">Silence before auto-stop</string>
+    <string name="voice_input_settings_autostop_silence_duration_subtitle">How long you need to stay silent after speaking before recording stops automatically. Default: %1$s</string>
+    <string name="voice_input_settings_autostop_silence_duration_value">%1$.1f s</string>
     <string name="voice_input_settings_animate_bubble">Animations</string>
     <string name="voice_input_settings_animate_bubble_subtitle">Display a bubble that reacts to speech</string>
     <string name="voice_input_settings_change_models">Models</string>

@@ -1,5 +1,6 @@
 package org.futo.inputmethod.latin.uix.actions
 
+import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -37,9 +38,14 @@ import org.futo.inputmethod.latin.uix.ENABLE_SOUND
 import org.futo.inputmethod.latin.uix.KeyboardManagerForAction
 import org.futo.inputmethod.latin.uix.PREFER_BLUETOOTH
 import org.futo.inputmethod.latin.uix.PersistentActionState
+import org.futo.inputmethod.latin.uix.REMOTE_VOICE_INPUT_API_KEY
+import org.futo.inputmethod.latin.uix.REMOTE_VOICE_INPUT_MODEL
+import org.futo.inputmethod.latin.uix.REMOTE_VOICE_INPUT_URL
+import org.futo.inputmethod.latin.uix.USE_REMOTE_VOICE_INPUT
 import org.futo.inputmethod.latin.uix.ResourceHelper
 import org.futo.inputmethod.latin.uix.USE_PERSONAL_DICT
 import org.futo.inputmethod.latin.uix.USE_VAD_AUTOSTOP
+import org.futo.inputmethod.latin.uix.VAD_AUTOSTOP_SILENCE_MS
 import org.futo.inputmethod.latin.uix.VERBOSE_PROGRESS
 import org.futo.inputmethod.latin.uix.getSetting
 import org.futo.inputmethod.latin.uix.setSetting
@@ -53,6 +59,7 @@ import org.futo.voiceinput.shared.RecognizerViewListener
 import org.futo.voiceinput.shared.RecognizerViewSettings
 import org.futo.voiceinput.shared.RecordingSettings
 import org.futo.voiceinput.shared.SoundPlayer
+import org.futo.voiceinput.shared.remote.RemoteTranscriptionConfiguration
 import org.futo.voiceinput.shared.types.Language
 import org.futo.voiceinput.shared.types.ModelLoader
 import org.futo.voiceinput.shared.types.getLanguageFromWhisperString
@@ -115,7 +122,8 @@ class VoiceInputPersistentState(val manager: KeyboardManagerForAction) : Persist
 
 private class VoiceInputActionWindow(
     val manager: KeyboardManagerForAction, val state: VoiceInputPersistentState,
-    val model: ModelLoader, val locales: List<Locale>
+    val model: ModelLoader?, val remoteConfiguration: RemoteTranscriptionConfiguration?,
+    val locales: List<Locale>
 ) : ActionWindow(), RecognizerViewListener {
     val context = manager.getContext()
 
@@ -131,7 +139,9 @@ private class VoiceInputActionWindow(
         val usePersonalDict = context.getSetting(USE_PERSONAL_DICT)
         val animateBubble = context.getSetting(ANIMATE_BUBBLE)
 
-        val primaryModel = model
+        // When using a remote server the local model is never loaded, but the run configuration
+        // still needs a placeholder value.
+        val primaryModel = model ?: ResourceHelper.BuiltInVoiceInputFallbacks.values.first()
         val languageSpecificModels = mutableMapOf<Language, ModelLoader>()
         val allowedLanguages = locales.mapNotNull { getLanguageFromWhisperString(it.language) }.toSet()
         val glossary = if(usePersonalDict) {
@@ -159,8 +169,10 @@ private class VoiceInputActionWindow(
                 preferBluetoothMic = useBluetoothAudio,
                 requestAudioFocus = requestAudioFocus,
                 canExpandSpace = canExpandSpace,
-                useVADAutoStop = useVAD
-            )
+                useVADAutoStop = useVAD,
+                vadSilenceDurationMs = context.getSetting(VAD_AUTOSTOP_SILENCE_MS)
+            ),
+            remoteConfiguration = remoteConfiguration
         )
     }
 
@@ -286,7 +298,7 @@ private class VoiceInputActionWindow(
     }
 
     override fun openSettings() {
-        SettingsActivity.openToNavDest(context, "languages")
+        SettingsActivity.openToNavDest(context, if(remoteConfiguration != null) "voiceInput" else "languages")
     }
 }
 
@@ -302,6 +314,19 @@ private class VoiceInputNoModelWindow(val locale: Locale) : ActionWindow() {
     }
 }
 
+private fun getRemoteConfiguration(context: Context): RemoteTranscriptionConfiguration? {
+    if(!context.getSetting(USE_REMOTE_VOICE_INPUT)) return null
+
+    val url = context.getSetting(REMOTE_VOICE_INPUT_URL)
+    if(url.isBlank()) return null
+
+    return RemoteTranscriptionConfiguration(
+        baseUrl = url,
+        apiKey = context.getSetting(REMOTE_VOICE_INPUT_API_KEY),
+        model = context.getSetting(REMOTE_VOICE_INPUT_MODEL)
+    )
+}
+
 val VoiceInputAction = Action(icon = R.drawable.mic_fill,
     name = R.string.action_voice_input_title,
     simplePressImpl = null,
@@ -309,15 +334,20 @@ val VoiceInputAction = Action(icon = R.drawable.mic_fill,
     persistentState = { VoiceInputPersistentState(it) },
     windowImpl = { manager, persistentState ->
         val locales = manager.getActiveLocales()
+        val remoteConfiguration = getRemoteConfiguration(manager.getContext())
 
-        val model = ResourceHelper.tryFindingVoiceInputModelForLocale(manager.getContext(), locales.firstOrNull() ?: Locale.ROOT)
+        val model = if(remoteConfiguration == null) {
+            ResourceHelper.tryFindingVoiceInputModelForLocale(manager.getContext(), locales.firstOrNull() ?: Locale.ROOT)
+        } else {
+            null
+        }
 
-        if(model == null) {
+        if(remoteConfiguration == null && model == null) {
             VoiceInputNoModelWindow(locales.firstOrNull() ?: Locale.ROOT)
         } else {
             VoiceInputActionWindow(
                 manager = manager, state = persistentState as VoiceInputPersistentState,
-                locales = locales, model = model
+                locales = locales, model = model, remoteConfiguration = remoteConfiguration
             )
         }
     }

@@ -16,6 +16,9 @@
 
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+    <!-- VoxRT VAD requires API 26; voiceinput-shared guards its use and falls back to WebRTC VAD -->
+    <uses-sdk tools:overrideLibrary="com.voxrt.silero" />
+
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!--<uses-permission android:name="android.permission.READ_PROFILE"/>--> <!-- ? -->
     <uses-permission android:name="android.permission.READ_USER_DICTIONARY"/>
@@ -35,12 +38,16 @@
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove"/>
 
+    <!-- For sending voice input to a user-configured OpenAI-compatible transcription server -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application android:label="@string/english_ime_name"
          android:icon="@mipmap/ic_launcher"
          android:roundIcon="@mipmap/ic_launcher_round"
          android:supportsRtl="true"
          android:allowBackup="true"
          android:largeHeap="true"
+         android:usesCleartextTraffic="true"
          android:enableOnBackInvokedCallback="true"
          android:name=".CrashLoggingApplication">
 

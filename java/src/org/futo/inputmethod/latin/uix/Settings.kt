@@ -379,6 +379,26 @@ val SYSTEM_VOICE_INPUT_PACKAGE = SettingsKey(
     default = ""
 )
 
+val USE_REMOTE_VOICE_INPUT = SettingsKey(
+    key = booleanPreferencesKey("useRemoteVoiceInput"),
+    default = false
+)
+
+val REMOTE_VOICE_INPUT_URL = SettingsKey(
+    key = stringPreferencesKey("remoteVoiceInputUrl"),
+    default = ""
+)
+
+val REMOTE_VOICE_INPUT_API_KEY = SettingsKey(
+    key = stringPreferencesKey("remoteVoiceInputApiKey"),
+    default = ""
+)
+
+val REMOTE_VOICE_INPUT_MODEL = SettingsKey(
+    key = stringPreferencesKey("remoteVoiceInputModel"),
+    default = "whisper-1"
+)
+
 val USE_TRANSFORMER_FINETUNING = SettingsKey(
     key = booleanPreferencesKey("useTransformerFinetuning2"),
     default = false

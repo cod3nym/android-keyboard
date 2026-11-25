@@ -63,6 +63,27 @@ val ThirdPartyList: List<ThirdPartyItem> = listOf(
         License.MIT
     ),
     TP(
+        "Silero VAD",
+        "Voice activity detection model",
+        "https://github.com/snakers4/silero-vad",
+        "Copyright (c) 2020-present Silero Team",
+        License.MIT
+    ),
+    TP(
+        "VoxRT Silero Android",
+        "Voice activity detection runtime (Kotlin wrapper)",
+        "https://github.com/VoxRT/voxrt-silero-android",
+        "Copyright (c) VoxRT",
+        License.Apache2
+    ),
+    TP(
+        "VoxRT runtime",
+        "Voice activity detection runtime (libvoxrt_silero.so)",
+        "https://github.com/VoxRT/voxrt-silero-android/blob/main/LICENSE-BINARY",
+        "Copyright (c) 2026 Elephant Enterprises LLC (d/b/a VoxRT)",
+        License.Proprietary
+    ),
+    TP(
         "LineageOS LatinIME",
         "Some keyboard layouts used from LineageOS",
         "https://github.com/LineageOS/android_packages_inputmethods_LatinIME",
