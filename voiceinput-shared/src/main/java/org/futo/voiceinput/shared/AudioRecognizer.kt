@@ -17,12 +17,6 @@ import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import androidx.lifecycle.LifecycleCoroutineScope
-import com.konovalov.vad.Vad
-import com.konovalov.vad.config.FrameSize
-import com.konovalov.vad.config.Mode
-import com.konovalov.vad.config.Model
-import com.konovalov.vad.config.SampleRate
-import com.konovalov.vad.models.VadModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -48,8 +42,6 @@ import org.futo.voiceinput.shared.whisper.MultiModelRunConfiguration
 import org.futo.voiceinput.shared.whisper.MultiModelRunner
 import org.futo.voiceinput.shared.whisper.isBlankResult
 import java.nio.FloatBuffer
-import java.nio.ShortBuffer
-import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.sqrt
 
@@ -115,9 +107,7 @@ class AudioRecognizer(
 
     private val canExpandSpace = settings.recordingConfiguration.canExpandSpace
     private val useVAD = settings.recordingConfiguration.useVADAutoStop
-
-    // VAD frames are 480 samples at 16kHz = 30ms each
-    private val vadSilenceFrames = (settings.recordingConfiguration.vadSilenceDurationMs / 30).coerceAtLeast(1)
+    private val vadSilenceDurationMs = settings.recordingConfiguration.vadSilenceDurationMs.coerceAtLeast(1)
 
     private var floatSamples: FloatBuffer = FloatBuffer.allocate(16000 * 30)
     private var recorderJob: Job? = null
@@ -324,7 +314,7 @@ class AudioRecognizer(
         return false
     }
 
-    private suspend fun recordingJob(recorder: AudioRecord, vad: VadModel?) {
+    private suspend fun recordingJob(recorder: AudioRecord, vad: VoiceActivityDetector?) {
         var hasTalked = false
         var anyNoiseAtAll = false
 
@@ -337,14 +327,7 @@ class AudioRecognizer(
         }
         var isMicBlocked = false
 
-        val vadSampleBuffer = ShortBuffer.allocate(480)
-        var numConsecutiveNonSpeech = 0
-        var numConsecutiveSpeech = 0
-
-        // Adaptive energy detection. On some devices (e.g. Nothing Phone) the VOICE_RECOGNITION
-        // source has very low gain, so speech never exceeds WebRTC VAD's internal energy floor.
-        // We therefore also treat a frame as speech when it is well above the background noise.
-        var noiseFloor = Float.POSITIVE_INFINITY
+        var vadStartSoundReset = false
 
         val samples = ShortArray(1600)
 
@@ -356,7 +339,8 @@ class AudioRecognizer(
 
             var isRunningOutOfSpace = (floatSamples.remaining() < nRead.coerceAtLeast(1600)) && !expandSpaceIfAllowed()
 
-            val hasNotTalkedRecently = hasTalked && (numConsecutiveNonSpeech > vadSilenceFrames) && useVAD
+            val hasNotTalkedRecently = vad != null && vadStartSoundReset &&
+                    vad.hasDetectedSpeech && vad.silenceMs > vadSilenceDurationMs
             if (isRunningOutOfSpace || hasNotTalkedRecently) {
                 yield()
                 withContext(Dispatchers.Main) {
@@ -365,54 +349,22 @@ class AudioRecognizer(
                 return
             }
 
-            // Run VAD
-            if(useVAD && vad != null) {
-                var remainingSamples = nRead
-                var offset = 0
-                while (remainingSamples > 0) {
-                    if (!vadSampleBuffer.hasRemaining()) {
-                        val frame = vadSampleBuffer.array()
-                        val frameRms = sqrt(frame.sumOf { (it.toFloat() / Short.MAX_VALUE.toFloat()).pow(2).toDouble() } / frame.size).toFloat()
-                        noiseFloor = if (frameRms < noiseFloor) frameRms else noiseFloor * NOISE_FLOOR_RISE_PER_FRAME
-                        val speechThreshold = maxOf(noiseFloor * SPEECH_ABOVE_NOISE_RATIO, MIN_SPEECH_RMS)
-
-                        val isSpeech = vad.isSpeech(frame) || frameRms > speechThreshold
-                        vadSampleBuffer.clear()
-                        vadSampleBuffer.rewind()
-
-                        if (!isSpeech) {
-                            numConsecutiveNonSpeech++
-                            numConsecutiveSpeech = 0
-                        } else {
-                            numConsecutiveNonSpeech = 0
-                            numConsecutiveSpeech++
-                        }
-                    }
-
-                    val samplesToRead = min(min(remainingSamples, 480), vadSampleBuffer.remaining())
-                    for (i in 0 until samplesToRead) {
-                        vadSampleBuffer.put(
-                            samples[offset]
-                        )
-                        offset += 1
-                        remainingSamples -= 1
-                    }
-                }
-            }
+            vad?.process(samples, nRead)
 
             floatSamples.put(samples.sliceArray(0 until nRead).map { it.toFloat() / Short.MAX_VALUE.toFloat() }.toFloatArray())
 
             // Don't set hasTalked if the start sound may still be playing, otherwise on some
             // devices the rms just explodes and `hasTalked` is always true
             val startSoundPassed = (floatSamples.position() > 16000 * 0.6)
-            if (!startSoundPassed) {
-                numConsecutiveSpeech = 0
-                numConsecutiveNonSpeech = 0
+            if (startSoundPassed && !vadStartSoundReset) {
+                // Discard any speech the VAD attributed to the start sound
+                vad?.reset()
+                vadStartSoundReset = true
             }
 
             val rms = sqrt(samples.sumOf { (it.toFloat() / Short.MAX_VALUE.toFloat()).pow(2).toDouble() } / samples.size).toFloat()
 
-            if (startSoundPassed && ((rms > 0.01) || (numConsecutiveSpeech > 8))) {
+            if (startSoundPassed && ((rms > 0.01) || (vad?.hasDetectedSpeech == true))) {
                 hasTalked = true
             }
 
@@ -457,6 +409,7 @@ class AudioRecognizer(
                         }
                         break
                     }
+                    vad?.process(samples, nRead2)
                     floatSamples.put(samples.sliceArray(0 until nRead2).map { it.toFloat() / Short.MAX_VALUE.toFloat() }.toFloatArray())
                 } else {
                     break
@@ -464,21 +417,6 @@ class AudioRecognizer(
             }
         }
         println("isRecording loop exited")
-    }
-
-    private companion object {
-        // ~18 dB above the measured background noise counts as speech
-        const val SPEECH_ABOVE_NOISE_RATIO = 8.0f
-        // Never consider anything below -60 dBFS speech
-        const val MIN_SPEECH_RMS = 0.001f
-        // Let the noise floor creep up (~1.7%/s) so it can follow increasing background noise
-        const val NOISE_FLOOR_RISE_PER_FRAME = 1.0005f
-    }
-
-    private fun createVad(): VadModel {
-        return Vad.builder().setModel(Model.WEB_RTC_GMM).setMode(Mode.VERY_AGGRESSIVE)
-            .setFrameSize(FrameSize.FRAME_SIZE_480).setSampleRate(SampleRate.SAMPLE_RATE_16K)
-            .setSpeechDurationMs(150).setSilenceDurationMs(300).build()
     }
 
     @Throws(SecurityException::class)
@@ -501,7 +439,7 @@ class AudioRecognizer(
             recorderJob = lifecycleScope.launch {
                 withContext(Dispatchers.Default) {
                     if(useVAD) {
-                        createVad().use { vad ->
+                        VoiceActivityDetector.create(context).use { vad ->
                             recordingJob(recorder, vad)
                         }
                     } else {
