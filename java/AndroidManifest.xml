@@ -16,6 +16,9 @@
 
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+    <!-- VoxRT VAD requires API 26; voiceinput-shared guards its use and falls back to WebRTC VAD -->
+    <uses-sdk tools:overrideLibrary="com.voxrt.silero" />
+
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!--<uses-permission android:name="android.permission.READ_PROFILE"/>--> <!-- ? -->
     <uses-permission android:name="android.permission.READ_USER_DICTIONARY"/>

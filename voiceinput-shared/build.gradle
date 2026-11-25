@@ -127,7 +127,10 @@ dependencies {
     implementation 'androidx.navigation:navigation-compose:2.7.7'
     implementation 'androidx.datastore:datastore-preferences:1.1.1'
 
+    // WebRTC VAD, used as a fallback where VoxRT is unsupported (API < 26, 32-bit ABIs)
     implementation(name:'vad-release', ext:'aar')
+    // Silero VAD via VoxRT (minSdk 26, arm64-v8a + x86_64 only); weights bundled in assets
+    implementation 'com.github.VoxRT:voxrt-silero-android:v0.1.2'
 
     implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1'
 }
